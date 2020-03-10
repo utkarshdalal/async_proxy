@@ -1,7 +1,5 @@
-import aiohttp
-from aiohttp import web
-import socket
-from datetime import datetime, timedelta
+from aiohttp import web, ClientSession
+from datetime import datetime
 
 
 class AsyncProxy(object):
@@ -12,16 +10,41 @@ class AsyncProxy(object):
 
     async def handle(self, request):
         url = request.query.get('url')
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(family=socket.AF_INET)) as session:
+        range_header = request.headers.get('Range', None)
+        range_param = request.query.get('range', None)
+        headers = self.format_request_headers(request.headers.copy())
+
+        if not self.validate_range(range_header, range_param):
+            return web.Response(text='Range header and query parameter are inconsistent', content_type='text/html',
+                                status=416)
+
+        if range_param:
+            headers['Range'] = range_param
+
+        print(request.headers)
+        print(headers)
+        async with ClientSession(headers=headers) as session:
             async with session.get(url) as resp:
                 text = await resp.text()
-                # return BeautifulSoup(text, 'html.parser')
-                return web.Response(text=text, content_type='text/html')
+                print(resp.headers)
+                print(resp.status)
+                return web.Response(text=text, headers=resp.headers, status=resp.status)
 
     async def get_stats(self, request):
         text = f'Total bytes transferred: {self.bytes_received} <br> Total time up: {datetime.now() - self.start_time}'
-        return web.Response(text=text, content_type='text/html')
+        return web.Response(text=text, content_type='text/html', status=200)
 
+    def format_request_headers(self, headers):
+        if 'Connection' in headers:
+            for connection_token in headers['Connection']:
+                headers.pop(connection_token, None)
+            headers.pop('Connection', None)
+        return headers
+
+    def validate_range(self, range_header, range_param):
+        if (range_header and range_param) and (range_header != range_param):
+            return False
+        return True
 
 
 app = web.Application()
