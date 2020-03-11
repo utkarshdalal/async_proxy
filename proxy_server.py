@@ -1,11 +1,11 @@
-from aiohttp import web, ClientSession
+from aiohttp import web, ClientSession, TCPConnector
+import socket
 from datetime import datetime
 
 
 class AsyncProxy(object):
     def __init__(self):
         self.bytes_received = 0
-        self.bytes_sent = 0
         self.start_time = datetime.now()
 
     async def handle(self, request):
@@ -23,8 +23,10 @@ class AsyncProxy(object):
 
         print(request.headers)
         print(headers)
-        async with ClientSession(headers=headers) as session:
+        async with ClientSession(headers=headers, connector=TCPConnector(family=socket.AF_INET)) as session:
             async with session.get(url) as resp:
+                num_bytes = resp.content._size
+                self.bytes_received += int(num_bytes)
                 text = await resp.text()
                 print(resp.headers)
                 print(resp.status)
@@ -34,6 +36,7 @@ class AsyncProxy(object):
         text = f'Total bytes transferred: {self.bytes_received} <br> Total time up: {datetime.now() - self.start_time}'
         return web.Response(text=text, content_type='text/html', status=200)
 
+    # Remove Connection header and all its underlying values as per section 8.1.3 of RFC2616 spec
     def format_request_headers(self, headers):
         if 'Connection' in headers:
             for connection_token in headers['Connection']:
@@ -47,9 +50,9 @@ class AsyncProxy(object):
         return True
 
 
+print("Hello")
 app = web.Application()
 async_proxy = AsyncProxy()
 app.add_routes([web.get('/', async_proxy.handle), web.get('/stats', async_proxy.get_stats)])
-
-if __name__ == '__main__':
-    web.run_app(app)
+print("Running...")
+web.run_app(app)
