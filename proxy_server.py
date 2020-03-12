@@ -16,7 +16,7 @@ def validate_range(range_header, range_param):
 
 
 # Remove Connection header and all headers with underlying connection-tokens as per section 8.1.3 of RFC2616 spec
-# Add Via header as per section 14.45 for RFC2616 spec
+# Add Via header as per section 14.45 of RFC2616 spec
 def format_request_headers(headers):
     if 'Connection' in headers:
         for connection_token in headers.get('Connection', []):
@@ -45,7 +45,7 @@ class AsyncProxy(object):
             headers['Range'] = range_param
 
         print(request.headers)
-        print(headers)
+        # print(headers)
         async with ClientSession(headers=headers, connector=TCPConnector(family=socket.AF_INET)) as session:
             async with session.get(url) as resp:
                 num_bytes = resp.content._size
@@ -53,9 +53,10 @@ class AsyncProxy(object):
                 text = await resp.text()
                 response_headers = resp.headers.copy()
                 response_headers = add_via_header(response_headers)
-                print(response_headers)
-                print(resp.status)
-                return web.Response(text=text, headers=resp.headers, status=resp.status)
+                # print(response_headers)
+                # print(resp.status)
+                # print(text)
+                return web.Response(text=text, headers=response_headers, status=resp.status)
 
     async def get_stats(self, request):
         text = f'Total bytes transferred: {self.bytes_received} <br> Total time up: {datetime.now() - self.start_time}'
