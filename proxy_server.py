@@ -1,5 +1,4 @@
 from aiohttp import web, ClientSession, TCPConnector
-import socket
 from datetime import datetime
 
 
@@ -19,11 +18,20 @@ def validate_range(range_header, range_param):
 # Add Via header as per section 14.45 of RFC2616 spec
 def format_request_headers(headers):
     if 'Connection' in headers:
-        for connection_token in headers.get('Connection', []):
-            headers.pop(connection_token, None)
+        for connection_token in headers.get('Connection', []).split(','):
+            headers.pop(connection_token.strip(), None)
         headers.pop('Connection', None)
     headers = add_via_header(headers)
     return headers
+
+
+def prepare_response_headers(response_headers):
+    response_headers = format_request_headers(response_headers)
+    # For whatever reason, the response does not display correctly unless the following headers are removed.
+    response_headers.pop('Content-Encoding', None)
+    response_headers.pop('Content-Length', None)
+    response_headers.pop('Transfer-Encoding', None)
+    return response_headers
 
 
 class AsyncProxy(object):
@@ -32,7 +40,7 @@ class AsyncProxy(object):
         self.start_time = datetime.now()
 
     async def handle(self, request):
-        url = request.query.get('url')
+        url = request.query.get('url', 'http://www.google.com')
         range_header = request.headers.get('Range', None)
         range_param = request.query.get('range', None)
         headers = format_request_headers(request.headers.copy())
@@ -44,18 +52,14 @@ class AsyncProxy(object):
         if range_param:
             headers['Range'] = range_param
 
-        print(request.headers)
-        # print(headers)
-        async with ClientSession(headers=headers, connector=TCPConnector(family=socket.AF_INET)) as session:
+        # aiohttp adds Host header by default, so we must pop the original unfortunately, otherwise we get 400 errors
+        headers.pop('Host')
+        async with ClientSession(headers=headers, connector=TCPConnector(ssl=False)) as session:
             async with session.get(url) as resp:
                 num_bytes = resp.content._size
                 self.bytes_received += int(num_bytes)
                 text = await resp.text()
-                response_headers = resp.headers.copy()
-                response_headers = add_via_header(response_headers)
-                # print(response_headers)
-                # print(resp.status)
-                # print(text)
+                response_headers = prepare_response_headers(resp.headers.copy())
                 return web.Response(text=text, headers=response_headers, status=resp.status)
 
     async def get_stats(self, request):
@@ -70,6 +74,7 @@ def create_app():
     return app
 
 
-async_proxy_app = create_app()
-print("Running...")
-web.run_app(async_proxy_app)
+if __name__ == "__main__":
+    async_proxy_app = create_app()
+    print("Running...")
+    web.run_app(async_proxy_app)

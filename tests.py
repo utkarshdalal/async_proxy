@@ -1,9 +1,10 @@
+from multidict import CIMultiDict
+
 from proxy_server import AsyncProxy
 import pytest
 from aiohttp import web
 from freezegun import freeze_time
-from aiohttp.test_utils import make_mocked_request
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, ANY
 
 
 @pytest.fixture
@@ -16,19 +17,34 @@ def cli(loop, aiohttp_client, freezer):
         return loop.run_until_complete(aiohttp_client(app))
 
 
-# @aioresponses()
 @pytest.mark.freeze_time
-async def test_set_value(cli, freezer, mocker):
+async def test_get_stats(cli, freezer, mocker):
     with freeze_time('2020-02-02 01:00:00'):
         mocker.patch('aiohttp.ClientSession.get',
                      return_value=MockResponse(mock_text_response, mock_headers, mock_status))
         await cli.get('/?url=http://www.google.com')
+        await cli.get('/?url=http://www.facebook.com')
         resp = await cli.get('/stats')
         assert resp.status == 200
-        assert await resp.text() == 'Total bytes transferred: 1234 <br> Total time up: 1 day, 1:00:00'
+        assert await resp.text() == 'Total bytes transferred: 3118 <br> Total time up: 1 day, 1:00:00'
 
 
-async def test_get_value(cli, mocker):
+@pytest.mark.asyncio
+async def test_headers(cli, mocker):
+    mocked_session = mocker.patch('aiohttp.ClientSession.__init__', return_value=None)
+    await cli.get('/?url=http://www.google.com',
+                  headers={'Hi': 'Hey', 'Connection': 'keep-alive, die', 'keep-alive': 'yes', 'die': 'no'})
+    expected_headers = CIMultiDict()
+    expected_headers['Hi'] = 'Hey'
+    expected_headers['Accept'] = '*/*'
+    expected_headers['Accept-Encoding'] = 'gzip, deflate'
+    expected_headers['User-Agent'] = 'Python/3.8 aiohttp/3.6.2'
+    expected_headers['Via'] = '1.1 asyncproxy'
+    mocked_session.assert_called_with(connector=ANY, headers=expected_headers)
+
+
+@pytest.mark.asyncio
+async def test_get(cli, mocker):
     mocker.patch('aiohttp.ClientSession.get', return_value=MockResponse(mock_text_response, mock_headers, mock_status))
     resp = await cli.get('/?url=http://www.google.com',
                          headers={'Hi': 'Hey', 'Connection': 'keep-alive', 'keep-alive': 'yes'})
@@ -39,24 +55,45 @@ async def test_get_value(cli, mocker):
     assert resp.headers['Content-Length'] == '1561'
     assert resp.headers['Date'] == 'Thu, 12 Mar 2020 11:59:02 GMT'
     assert resp.headers['Via'] == '1.1 asyncproxy'
+    assert resp.headers['Server'] == 'Python/3.8 aiohttp/3.6.2'
+    assert len(resp.headers) == 6
 
 
+@pytest.mark.asyncio
 async def test_range_1(cli):
     resp = await cli.get('/?url=http://www.google.com&range=bytes:0-999', headers={'Range': 'bytes:0-666'})
     assert await resp.text() == 'Range header and query parameter are inconsistent'
     assert resp.status == 416
 
 
-async def test_range_2(cli):
-    resp = await cli.get('/?url=http://www.google.com&range=bytes:0-999')
-    assert await resp.text() == 'Range header and query parameter are inconsistent'
-    assert resp.status == 416
+@pytest.mark.asyncio
+async def test_range_2(cli, mocker):
+    mocked_session = mocker.patch('aiohttp.ClientSession.__init__', return_value=None)
+    await cli.get('/?url=http://www.google.com&range=bytes:0-999',
+                  headers={'Hi': 'Hey', 'Connection': 'keep-alive, die', 'keep-alive': 'yes'})
+    expected_headers = CIMultiDict()
+    expected_headers['Hi'] = 'Hey'
+    expected_headers['Accept'] = '*/*'
+    expected_headers['Accept-Encoding'] = 'gzip, deflate'
+    expected_headers['User-Agent'] = 'Python/3.8 aiohttp/3.6.2'
+    expected_headers['Via'] = '1.1 asyncproxy'
+    expected_headers['Range'] = 'bytes:0-999'
+    mocked_session.assert_called_with(connector=ANY, headers=expected_headers)
 
-# async def test_get_value(cli):
-#     cli.server.app['value'] = 'bar'
-#     resp = await cli.get('/')
-#     assert resp.status == 200
-#     assert await resp.text() == 'value: bar'
+
+@pytest.mark.asyncio
+async def test_range_3(cli, mocker):
+    mocked_session = mocker.patch('aiohttp.ClientSession.__init__', return_value=None)
+    await cli.get('/?url=http://www.google.com',
+                  headers={'Hi': 'Hey', 'Connection': 'keep-alive, die', 'keep-alive': 'yes', 'Range': 'bytes:0-666'})
+    expected_headers = CIMultiDict()
+    expected_headers['Hi'] = 'Hey'
+    expected_headers['Range'] = 'bytes:0-666'
+    expected_headers['Accept'] = '*/*'
+    expected_headers['Accept-Encoding'] = 'gzip, deflate'
+    expected_headers['User-Agent'] = 'Python/3.8 aiohttp/3.6.2'
+    expected_headers['Via'] = '1.1 asyncproxy'
+    mocked_session.assert_called_with(connector=ANY, headers=expected_headers)
 
 
 mock_text_response = """<!DOCTYPE html>
@@ -82,8 +119,9 @@ mock_text_response = """<!DOCTYPE html>
   <p><b>404.</b> <ins>That’s an error.</ins>
   <p>The requested URL <code>/</code> was not f"""
 
-mock_headers = {'Content-Type': 'text/html; charset=UTF-8', 'Referrer-Policy': 'no-referrer', 'Content-Length': '1561',
-                'Date': 'Thu, 12 Mar 2020 11:59:02 GMT'}
+mock_headers = {'Content-Type': 'text/html; charset=UTF-8', 'Referrer-Policy': 'no-referrer',
+                'Content-Length': 'irrelevant number',
+                'Date': 'Thu, 12 Mar 2020 11:59:02 GMT', 'Content-Encoding': 'xyz', 'Transfer-Encoding': 'chunked'}
 
 mock_status = 200
 
@@ -93,7 +131,7 @@ class MockResponse:
         self._text = text
         self.status = status
         self.headers = headers
-        size = 1234
+        size = len(text)
         content = MagicMock()
         content._size = size
         self.content = content
@@ -106,3 +144,11 @@ class MockResponse:
 
     async def __aenter__(self):
         return self
+
+
+class MockSession:
+    def __init__(self, text, headers, status):
+        self.get_response = MockResponse(text, headers, status)
+
+    async def get(self, url):
+        return self.get_response
