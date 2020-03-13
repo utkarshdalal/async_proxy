@@ -1,4 +1,4 @@
-#AsyncProxy
+# AsyncProxy
 
 ## Instructions
 1. To run the proxy, run `docker-compose up`. To be sure that you are using the latest version of the Dockerfile, you 
