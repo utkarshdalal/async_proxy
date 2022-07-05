@@ -14,7 +14,7 @@ multidict==4.7.5
 packaging==20.3
 pluggy==0.13.1
 py==1.8.1
-pycares==3.1.1
+pycares==4.2.0
 pycparser==2.20
 pyparsing==2.4.6
 pytest==5.3.5
